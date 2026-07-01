@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+installer_output/
+*.spec.bak
+.pytest_cache/
+.ruff_cache/
+
+# Data internal / sensitif — JANGAN di-push (berisi link Google Drive asli)
+docs/
+
+
+# Dokumen internal / panduan agent — tidak untuk repo publik
+CLAUDE.md
+AGENTS.md
+PRD.md
