@@ -3,7 +3,7 @@
 ; Prasyarat: sudah build dulu (pyinstaller build.spec) sehingga dist\bxtoyektor\ ada.
 
 #define AppName "bxtoyektor"
-#define AppVersion "1.0.2"
+#define AppVersion "1.0.3"
 #define AppExe "bxtoyektor.exe"
 
 [Setup]
