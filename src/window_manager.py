@@ -99,12 +99,15 @@ class WindowManager(QObject):
         if self.presentation is None:
             self.buka_presentasi()
         assert self.presentation is not None
-        self.presentation.set_judul(judul)
         pv = self.presentation.preview.doc_viewer
-        self.presentation.preview.tampilkan_paged(doc, slideshow=slideshow)
-        # Samakan posisi (scroll/slide) & zoom (relatif ke layar proyektor) setelah
-        # layout siap.
-        QTimer.singleShot(0, lambda: pv.terapkan_state(fraksi_v, fraksi_h, zoom_relatif))
+
+        def _swap() -> None:
+            self.presentation.set_judul(judul)
+            self.presentation.preview.tampilkan_paged(doc, slideshow=slideshow)
+            # Samakan posisi (scroll/slide) & zoom (relatif ke layar proyektor).
+            QTimer.singleShot(0, lambda: pv.terapkan_state(fraksi_v, fraksi_h, zoom_relatif))
+
+        self.presentation.transisi_ganti(_swap)  # fade-out → swap → fade-in
 
     def tampilkan_video_ke_proyektor(self, path: str, judul: str) -> None:
         """Dorong video ke proyektor dengan operator sebagai MASTER (F-4.3/F-4.4).
@@ -117,40 +120,43 @@ class WindowManager(QObject):
         if self.presentation is None:
             self.buka_presentasi()
         assert self.presentation is not None
-        self.presentation.set_judul(judul)
 
         op = self._operator_panel.video_viewer if self._operator_panel else None
         proj = self.presentation.preview.video_viewer
 
-        self.presentation.preview.tampilkan_video(path, auto_play=False)
-        proj.set_muted(False)          # suara dari proyektor
-        if op is not None:
-            op.set_muted(True)         # hindari suara dobel
-
-        siap = (proj.player.MediaStatus.LoadedMedia, proj.player.MediaStatus.BufferedMedia)
-
-        def _mulai_selaras(status) -> None:
-            if status not in siap:
-                return
-            try:
-                proj.player.mediaStatusChanged.disconnect(_mulai_selaras)
-            except (TypeError, RuntimeError):
-                pass
+        def _swap() -> None:
+            self.presentation.set_judul(judul)
+            self.presentation.preview.tampilkan_video(path, auto_play=False)
+            proj.set_muted(False)          # suara dari proyektor
             if op is not None:
-                proj.set_posisi(op.posisi())
-                if op.player.playbackState() == op.player.PlaybackState.PlayingState:
-                    proj.play()
+                op.set_muted(True)         # hindari suara dobel
+
+            siap = (proj.player.MediaStatus.LoadedMedia, proj.player.MediaStatus.BufferedMedia)
+
+            def _mulai_selaras(status) -> None:
+                if status not in siap:
+                    return
+                try:
+                    proj.player.mediaStatusChanged.disconnect(_mulai_selaras)
+                except (TypeError, RuntimeError):
+                    pass
+                if op is not None:
+                    proj.set_posisi(op.posisi())
+                    if op.player.playbackState() == op.player.PlaybackState.PlayingState:
+                        proj.play()
+                    else:
+                        proj.pause()
                 else:
-                    proj.pause()
-            else:
-                proj.play()
+                    proj.play()
 
-        proj.player.mediaStatusChanged.connect(_mulai_selaras)
-        # Tangani kasus media sudah siap sebelum sinyal tersambung.
-        if proj.player.mediaStatus() in siap:
-            _mulai_selaras(proj.player.mediaStatus())
+            proj.player.mediaStatusChanged.connect(_mulai_selaras)
+            # Tangani kasus media sudah siap sebelum sinyal tersambung.
+            if proj.player.mediaStatus() in siap:
+                _mulai_selaras(proj.player.mediaStatus())
 
-        self._pasang_mirror_video()
+            self._pasang_mirror_video()
+
+        self.presentation.transisi_ganti(_swap)  # fade-out → swap → fade-in
 
     def _pasang_mirror_video(self) -> None:
         """Sambungkan sinyal player operator → proyektor (sekali saja)."""

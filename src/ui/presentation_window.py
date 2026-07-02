@@ -6,11 +6,15 @@ bersih. Bisa fullscreen (F11) dan mode kiosk (F-4.5).
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from collections.abc import Callable
+
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGraphicsOpacityEffect, QLabel, QVBoxLayout, QWidget
 
 from .widgets.preview_panel import PreviewPanel
+
+_DURASI_FADE = 220  # ms per arah (fade-out lalu fade-in)
 
 
 class PresentationWindow(QWidget):
@@ -43,6 +47,38 @@ class PresentationWindow(QWidget):
         QShortcut(QKeySequence(Qt.Key.Key_F11), self, self.toggle_fullscreen)
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self.keluar_fullscreen)
         QShortcut(QKeySequence(Qt.Key.Key_H), self, self.toggle_header)
+
+    def transisi_ganti(self, swap_fn: Callable[[], None]) -> None:
+        """Ganti konten dengan efek fade-out → swap → fade-in (saat ganti file).
+
+        Konten memudar ke latar gelap, ditukar oleh `swap_fn`, lalu muncul kembali.
+        Dipakai HANYA saat pergantian file (bukan saat scroll/ganti slide).
+        """
+        eff = QGraphicsOpacityEffect(self.preview)
+        self.preview.setGraphicsEffect(eff)
+        self._fade_eff = eff  # simpan referensi agar tidak di-GC
+
+        fade_out = QPropertyAnimation(eff, b"opacity", self)
+        fade_out.setDuration(_DURASI_FADE)
+        fade_out.setStartValue(1.0)
+        fade_out.setEndValue(0.0)
+        fade_out.setEasingCurve(QEasingCurve.Type.InOutQuad)
+
+        def _setelah_gelap() -> None:
+            swap_fn()
+            fade_in = QPropertyAnimation(eff, b"opacity", self)
+            fade_in.setDuration(_DURASI_FADE)
+            fade_in.setStartValue(0.0)
+            fade_in.setEndValue(1.0)
+            fade_in.setEasingCurve(QEasingCurve.Type.InOutQuad)
+            # Lepas efek setelah selesai agar render (khususnya video) normal lagi.
+            fade_in.finished.connect(lambda: self.preview.setGraphicsEffect(None))
+            self._fade_in = fade_in
+            fade_in.start()
+
+        fade_out.finished.connect(_setelah_gelap)
+        self._fade_out = fade_out
+        fade_out.start()
 
     def set_judul(self, teks: str) -> None:
         self._header.setText(teks)
