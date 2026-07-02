@@ -19,8 +19,8 @@ from .video_viewer import VideoViewer
 
 class PreviewPanel(QWidget):
     # Diteruskan dari DocumentViewer untuk sinkronisasi PERSIS (F-4.4).
-    state_berubah = Signal(float, float)   # (fraksi_scroll, zoom)
-    halaman_berubah = Signal(int, int)     # (indeks_halaman_atas, total)
+    state_berubah = Signal(float, float, float)  # (fraksi_v, fraksi_h, zoom_relatif)
+    halaman_berubah = Signal(int, int)           # (indeks_halaman_atas, total)
 
     def __init__(self, kontrol_video: bool = True, parent=None) -> None:
         super().__init__(parent)

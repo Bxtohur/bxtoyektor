@@ -5,9 +5,9 @@ bisa di-scroll bebas, zoom, dan lompat halaman. Halaman dirender LAZY (hanya yan
 terlihat) agar dokumen besar tetap responsif.
 
 Meng-emit:
-- `state_berubah(fraksi_scroll, zoom)` — untuk sinkronisasi PERSIS ke jendela
-  proyektor (F-4.4): posisi scroll dinyatakan sebagai fraksi 0..1 dari total tinggi
-  dokumen sehingga tetap sinkron walau ukuran layar berbeda.
+- `state_berubah(fraksi_v, fraksi_h, zoom)` — untuk sinkronisasi PERSIS ke jendela
+  proyektor (F-4.4): posisi scroll vertikal & horizontal dinyatakan sebagai fraksi
+  0..1 sehingga tetap sinkron walau ukuran layar berbeda.
 - `halaman_berubah(indeks_atas, total)` — halaman teratas yang terlihat, untuk UI.
 """
 from __future__ import annotations
@@ -23,8 +23,8 @@ _BUFFER_LAYAR = 1.0    # render halaman sejauh ±1 tinggi viewport dari area ter
 
 
 class DocumentViewer(QScrollArea):
-    state_berubah = Signal(float, float)   # (fraksi_scroll 0..1, zoom)
-    halaman_berubah = Signal(int, int)     # (indeks_halaman_atas, total)
+    state_berubah = Signal(float, float, float)  # (fraksi_v, fraksi_h, zoom_relatif)
+    halaman_berubah = Signal(int, int)           # (indeks_halaman_atas, total)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -48,6 +48,7 @@ class DocumentViewer(QScrollArea):
         self.setWidgetResizable(True)
         self.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
+        self.horizontalScrollBar().valueChanged.connect(self._on_scroll)
 
         # Debounce render saat scroll cepat.
         self._render_timer = QTimer(self)
@@ -77,6 +78,11 @@ class DocumentViewer(QScrollArea):
     @property
     def fraksi_scroll(self) -> float:
         bar = self.verticalScrollBar()
+        return bar.value() / bar.maximum() if bar.maximum() > 0 else 0.0
+
+    @property
+    def fraksi_scroll_h(self) -> float:
+        bar = self.horizontalScrollBar()
         return bar.value() / bar.maximum() if bar.maximum() > 0 else 0.0
 
     @property
@@ -134,12 +140,12 @@ class DocumentViewer(QScrollArea):
         self._tata_ukuran()
         self._emit_state()
 
-    def terapkan_state(self, fraksi: float, zoom_relatif: float) -> None:
+    def terapkan_state(self, fraksi_v: float, fraksi_h: float, zoom_relatif: float) -> None:
         """Diterapkan oleh window_manager agar proyektor mengikuti operator (F-4.4).
 
         `zoom_relatif` ditafsirkan relatif terhadap fit-lebar LAYAR INI, sehingga
-        posisi & tingkat zoom sama persis walau ukuran layar berbeda. Tidak
-        meng-emit sinyal agar tidak terjadi loop sinkronisasi.
+        posisi (vertikal & horizontal) serta tingkat zoom sama persis walau ukuran
+        layar berbeda. Tidak meng-emit sinyal agar tidak terjadi loop sinkronisasi.
         """
         if not self._doc:
             return
@@ -156,7 +162,7 @@ class DocumentViewer(QScrollArea):
                     self._fit_lebar = False
                     self._zoom = target
                     self._tata_ukuran()
-            self._set_fraksi(fraksi)
+            self._set_fraksi(fraksi_v, fraksi_h)
         finally:
             self._suppress = False
 
@@ -201,14 +207,16 @@ class DocumentViewer(QScrollArea):
     def _set_zoom(self, z: float) -> None:
         self._fit_lebar = False
         self._zoom = max(0.1, min(z, 8.0))
-        fraksi = self.fraksi_scroll
+        fraksi_v, fraksi_h = self.fraksi_scroll, self.fraksi_scroll_h
         self._tata_ukuran()
-        QTimer.singleShot(0, lambda: self._set_fraksi(fraksi))
+        QTimer.singleShot(0, lambda: self._set_fraksi(fraksi_v, fraksi_h))
         self._emit_state()  # penting: agar zoom ikut tersinkron ke proyektor
 
-    def _set_fraksi(self, fraksi: float) -> None:
-        bar = self.verticalScrollBar()
-        bar.setValue(int(max(0.0, min(fraksi, 1.0)) * bar.maximum()))
+    def _set_fraksi(self, fraksi_v: float, fraksi_h: float = 0.0) -> None:
+        vbar = self.verticalScrollBar()
+        vbar.setValue(int(max(0.0, min(fraksi_v, 1.0)) * vbar.maximum()))
+        hbar = self.horizontalScrollBar()
+        hbar.setValue(int(max(0.0, min(fraksi_h, 1.0)) * hbar.maximum()))
         self._render_terlihat()
 
     # ---- internal: scroll & render lazy -------------------------------
@@ -219,7 +227,7 @@ class DocumentViewer(QScrollArea):
     def _emit_state(self) -> None:
         if self._suppress or not self._doc:
             return
-        self.state_berubah.emit(self.fraksi_scroll, self.zoom_relatif)
+        self.state_berubah.emit(self.fraksi_scroll, self.fraksi_scroll_h, self.zoom_relatif)
         self.halaman_berubah.emit(self._halaman_teratas(), self.jumlah_halaman)
 
     def _halaman_teratas(self) -> int:

@@ -87,7 +87,7 @@ class WindowManager(QObject):
         return self._sync_aktif
 
     def tampilkan_paged_ke_proyektor(
-        self, doc: RenderedDocument, judul: str, fraksi: float, zoom_relatif: float
+        self, doc: RenderedDocument, judul: str, fraksi_v: float, fraksi_h: float, zoom_relatif: float
     ) -> None:
         """Dorong dokumen halaman ke proyektor — HANYA setelah konfirmasi (F-4.3)."""
         if self.presentation is None:
@@ -96,9 +96,9 @@ class WindowManager(QObject):
         self.presentation.set_judul(judul)
         pv = self.presentation.preview.doc_viewer
         self.presentation.preview.tampilkan_paged(doc)
-        # Samakan posisi scroll & tingkat zoom (relatif ke layar proyektor) setelah
-        # layout siap.
-        QTimer.singleShot(0, lambda: pv.terapkan_state(fraksi, zoom_relatif))
+        # Samakan posisi scroll (vertikal & horizontal) & tingkat zoom (relatif ke
+        # layar proyektor) setelah layout siap.
+        QTimer.singleShot(0, lambda: pv.terapkan_state(fraksi_v, fraksi_h, zoom_relatif))
 
     def tampilkan_video_ke_proyektor(self, path: str, judul: str) -> None:
         """Dorong video ke proyektor dengan operator sebagai MASTER (F-4.3/F-4.4).
@@ -180,13 +180,11 @@ class WindowManager(QObject):
         if abs(proj.posisi() - pos) > 400:
             proj.set_posisi(pos)
 
-    def _on_operator_state_berubah(self, fraksi: float, zoom_relatif: float) -> None:
-        """Sinkronkan posisi scroll & zoom ke proyektor bila sync aktif (F-4.4).
-
-        Proyektor mengikuti fraksi scroll DAN zoom relatif operator, sehingga
-        tampilan sama meski resolusi layar berbeda.
+    def _on_operator_state_berubah(self, fraksi_v: float, fraksi_h: float, zoom_relatif: float) -> None:
+        """Sinkronkan posisi scroll (atas-bawah & kiri-kanan) + zoom ke proyektor
+        bila sync aktif (F-4.4), sehingga tampilan sama meski resolusi layar beda.
         """
         if not self._sync_aktif or not self.presentasi_terbuka:
             return
         assert self.presentation is not None
-        self.presentation.preview.doc_viewer.terapkan_state(fraksi, zoom_relatif)
+        self.presentation.preview.doc_viewer.terapkan_state(fraksi_v, fraksi_h, zoom_relatif)

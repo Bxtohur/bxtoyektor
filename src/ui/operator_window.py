@@ -380,10 +380,10 @@ class OperatorWindow(QMainWindow):
 
         # PAGED: render dokumen TERPISAH untuk proyektor (jangan berbagi handle fitz).
         dv = self.preview.doc_viewer
-        fraksi, zrel = dv.fraksi_scroll, dv.zoom_relatif
+        fraksi_v, fraksi_h, zrel = dv.fraksi_scroll, dv.fraksi_scroll_h, dv.zoom_relatif
         self._jalankan_worker(
             RenderWorker(self.renderer, item),
-            lambda doc: self.wm.tampilkan_paged_ke_proyektor(doc, judul, fraksi, zrel),
+            lambda doc: self.wm.tampilkan_paged_ke_proyektor(doc, judul, fraksi_v, fraksi_h, zrel),
             self._on_render_gagal,
         )
 
