@@ -40,6 +40,9 @@ class DocumentViewer(QScrollArea):
         self._labels: list[QLabel] = []
         self._rendered: set[int] = set()
         self._suppress = False  # cegah loop saat menerapkan state dari luar
+        # Fraksi horizontal yang diinginkan, diterapkan saat range hbar sudah ada
+        # (mengatasi race: range belum terhitung tepat setelah zoom/layout).
+        self._target_h: float | None = None
 
         self._container = QWidget()
         self._vbox = QVBoxLayout(self._container)
@@ -58,6 +61,8 @@ class DocumentViewer(QScrollArea):
             self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
         self.horizontalScrollBar().valueChanged.connect(self._on_scroll)
+        # Pusatkan horizontal begitu range-nya diketahui (mis. setelah zoom/layout).
+        self.horizontalScrollBar().rangeChanged.connect(self._on_hrange)
 
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
@@ -127,6 +132,8 @@ class DocumentViewer(QScrollArea):
             if zoom is not None:
                 self._zoom = zoom
         self._bangun_halaman()
+        # Continuous (PDF): target di tengah horizontal (0.5).
+        self._target_h = None if slideshow else 0.5
         self._tata_ukuran()
         QTimer.singleShot(0, lambda: self._set_fraksi(fraksi))
 
@@ -180,6 +187,7 @@ class DocumentViewer(QScrollArea):
             return
         self._suppress = True
         try:
+            self._target_h = fraksi_h  # posisi horizontal dari sinkronisasi
             if self._slideshow:
                 n = self.jumlah_halaman
                 target = round(fraksi_v * (n - 1)) if n > 1 else 0
@@ -198,7 +206,8 @@ class DocumentViewer(QScrollArea):
                     self._fit_lebar = False
                     self._zoom = target_zoom
                     self._tata_ukuran()
-            self._set_fraksi(fraksi_v, fraksi_h)
+            self._set_fraksi(fraksi_v)
+            self._terapkan_target_h()  # segera bila range sudah ada
         finally:
             self._suppress = False
 
@@ -268,20 +277,34 @@ class DocumentViewer(QScrollArea):
     def _set_zoom(self, z: float) -> None:
         self._fit_lebar = False
         self._zoom = max(0.1, min(z, 8.0))
-        fraksi_v, fraksi_h = self.fraksi_scroll, self.fraksi_scroll_h
+        fraksi_v = self.fraksi_scroll
+        self._target_h = 0.5  # tetap di tengah horizontal setelah zoom
         self._tata_ukuran()
-        QTimer.singleShot(0, lambda: self._set_fraksi(fraksi_v, fraksi_h))
+        QTimer.singleShot(0, lambda: self._set_fraksi(fraksi_v))
         self._emit_state()
 
-    def _set_fraksi(self, fraksi_v: float, fraksi_h: float = 0.0) -> None:
+    def _set_fraksi(self, fraksi_v: float) -> None:
+        """Set posisi scroll VERTIKAL. Horizontal ditangani via `_target_h`."""
         if self._slideshow:
             self._render_terlihat()
             return
         vbar = self.verticalScrollBar()
         vbar.setValue(int(max(0.0, min(fraksi_v, 1.0)) * vbar.maximum()))
-        hbar = self.horizontalScrollBar()
-        hbar.setValue(int(max(0.0, min(fraksi_h, 1.0)) * hbar.maximum()))
+        self._terapkan_target_h()
         self._render_terlihat()
+
+    def _terapkan_target_h(self) -> None:
+        """Terapkan posisi horizontal yang diinginkan bila range sudah tersedia."""
+        if self._target_h is None:
+            return
+        hbar = self.horizontalScrollBar()
+        if hbar.maximum() > 0:
+            hbar.setValue(int(max(0.0, min(self._target_h, 1.0)) * hbar.maximum()))
+            self._target_h = None
+
+    def _on_hrange(self, _min: int, _maks: int) -> None:
+        """Range horizontal berubah (mis. setelah zoom/layout) → terapkan target."""
+        self._terapkan_target_h()
 
     # ---- internal: scroll & render lazy -------------------------------
     def _on_scroll(self, _value: int) -> None:
