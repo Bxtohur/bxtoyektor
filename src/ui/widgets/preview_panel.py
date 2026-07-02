@@ -22,9 +22,9 @@ class PreviewPanel(QWidget):
     state_berubah = Signal(float, float, float)  # (fraksi_v, fraksi_h, zoom_relatif)
     halaman_berubah = Signal(int, int)           # (indeks_halaman_atas, total)
 
-    def __init__(self, kontrol_video: bool = True, parent=None) -> None:
+    def __init__(self, kontrol_video: bool = True, scrollbar: bool = True, parent=None) -> None:
         super().__init__(parent)
-        self.doc_viewer = DocumentViewer()
+        self.doc_viewer = DocumentViewer(sembunyikan_scrollbar=not scrollbar)
         self.video_viewer = VideoViewer(kontrol=kontrol_video)
         self._pesan = QLabel("Belum ada dokumen dipilih.")
         self._pesan.setWordWrap(True)
@@ -47,10 +47,12 @@ class PreviewPanel(QWidget):
     def kind(self) -> MediaKind:
         return self._kind
 
-    def tampilkan_paged(self, doc: RenderedDocument, fraksi: float = 0.0, zoom: float | None = None) -> None:
+    def tampilkan_paged(
+        self, doc: RenderedDocument, fraksi: float = 0.0, zoom: float | None = None, slideshow: bool = False
+    ) -> None:
         self.video_viewer.stop()
         self._kind = MediaKind.PAGED
-        self.doc_viewer.tampilkan(doc, fraksi=fraksi, zoom=zoom)
+        self.doc_viewer.tampilkan(doc, fraksi=fraksi, zoom=zoom, slideshow=slideshow)
         self._stack.setCurrentWidget(self.doc_viewer)
 
     def tampilkan_video(self, path: str | Path, auto_play: bool = True) -> None:

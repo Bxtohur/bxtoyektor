@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..data.models import DocumentItem, MediaKind, Sumber
+from ..data.models import DocumentItem, MediaKind, Sumber, TipeFile
 from ..render.document_renderer import DocumentRenderer, RenderedDocument
 from ..search.index import SearchIndex
 from ..settings import Settings, cache_dir
@@ -316,12 +316,21 @@ class OperatorWindow(QMainWindow):
             self._on_render_gagal,
         )
 
+    @staticmethod
+    def _pakai_slideshow(item: DocumentItem | None) -> bool:
+        """PPTX/PPT ditampilkan sebagai slide show (satu slide penuh per layar)."""
+        return item is not None and item.tipe_file in {TipeFile.PPTX, TipeFile.PPT}
+
     def _on_render_selesai(self, doc: RenderedDocument) -> None:
-        self.preview.tampilkan_paged(doc)
+        slideshow = self._pakai_slideshow(self._item_aktif)
+        self.preview.tampilkan_paged(doc, slideshow=slideshow)
         n = self.preview.doc_viewer.jumlah_halaman
         self.spin_halaman.setMaximum(max(1, n))
         self.lbl_total.setText(f"/ {n}")
-        self.status.showMessage("Siap. Cek dokumen sebelum tampil ke proyektor.")
+        if slideshow:
+            self.status.showMessage(f"Slide 1/{n} — pakai ◀/▶ untuk ganti slide, lalu tampilkan ke proyektor.")
+        else:
+            self.status.showMessage("Siap. Cek dokumen sebelum tampil ke proyektor.")
 
     def _on_render_gagal(self, err: str) -> None:
         self.preview.kosongkan(f"Tidak bisa menampilkan dokumen:\n{err}")
@@ -381,9 +390,10 @@ class OperatorWindow(QMainWindow):
         # PAGED: render dokumen TERPISAH untuk proyektor (jangan berbagi handle fitz).
         dv = self.preview.doc_viewer
         fraksi_v, fraksi_h, zrel = dv.fraksi_scroll, dv.fraksi_scroll_h, dv.zoom_relatif
+        slideshow = self._pakai_slideshow(item)
         self._jalankan_worker(
             RenderWorker(self.renderer, item),
-            lambda doc: self.wm.tampilkan_paged_ke_proyektor(doc, judul, fraksi_v, fraksi_h, zrel),
+            lambda doc: self.wm.tampilkan_paged_ke_proyektor(doc, judul, fraksi_v, fraksi_h, zrel, slideshow),
             self._on_render_gagal,
         )
 

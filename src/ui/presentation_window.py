@@ -24,8 +24,9 @@ class PresentationWindow(QWidget):
         self._header.setStyleSheet(
             "padding:8px; font-size:18px; font-weight:600; background:#000; color:#fff;"
         )
-        # Proyektor: tanpa kontrol video (tampilan bersih); diputar dari operator.
-        self.preview = PreviewPanel(kontrol_video=False)
+        # Proyektor: tanpa kontrol video & TANPA scrollbar (tampilan benar-benar
+        # bersih/fullscreen). Posisi scroll tetap mengikuti operator secara programatik.
+        self.preview = PreviewPanel(kontrol_video=False, scrollbar=False)
         self.preview.setStyleSheet("background:#111; border:none;")
 
         layout = QVBoxLayout(self)

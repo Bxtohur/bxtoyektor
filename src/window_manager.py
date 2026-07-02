@@ -87,7 +87,13 @@ class WindowManager(QObject):
         return self._sync_aktif
 
     def tampilkan_paged_ke_proyektor(
-        self, doc: RenderedDocument, judul: str, fraksi_v: float, fraksi_h: float, zoom_relatif: float
+        self,
+        doc: RenderedDocument,
+        judul: str,
+        fraksi_v: float,
+        fraksi_h: float,
+        zoom_relatif: float,
+        slideshow: bool = False,
     ) -> None:
         """Dorong dokumen halaman ke proyektor — HANYA setelah konfirmasi (F-4.3)."""
         if self.presentation is None:
@@ -95,9 +101,9 @@ class WindowManager(QObject):
         assert self.presentation is not None
         self.presentation.set_judul(judul)
         pv = self.presentation.preview.doc_viewer
-        self.presentation.preview.tampilkan_paged(doc)
-        # Samakan posisi scroll (vertikal & horizontal) & tingkat zoom (relatif ke
-        # layar proyektor) setelah layout siap.
+        self.presentation.preview.tampilkan_paged(doc, slideshow=slideshow)
+        # Samakan posisi (scroll/slide) & zoom (relatif ke layar proyektor) setelah
+        # layout siap.
         QTimer.singleShot(0, lambda: pv.terapkan_state(fraksi_v, fraksi_h, zoom_relatif))
 
     def tampilkan_video_ke_proyektor(self, path: str, judul: str) -> None:
