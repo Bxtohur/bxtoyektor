@@ -285,6 +285,9 @@ class OperatorWindow(QMainWindow):
     def _pilih_hasil(self, lw: QListWidgetItem) -> None:
         item: DocumentItem = lw.data(_ROLE_ITEM)
         self._item_aktif = item
+        # Catat file yang sedang dilihat operator; proyektor tidak ikut bergeser
+        # sampai file ini benar-benar "Ditampilkan ke Proyektor".
+        self.wm.set_item_operator(item.id)
         self.lbl_total.setText("/ 0")
 
         if item.sumber == Sumber.DRIVE:
@@ -383,7 +386,7 @@ class OperatorWindow(QMainWindow):
 
         judul = item.nama_file
         if item.kind == MediaKind.VIDEO:
-            self.wm.tampilkan_video_ke_proyektor(item.lokasi, judul)
+            self.wm.tampilkan_video_ke_proyektor(item.lokasi, judul, item_id=item.id)
             self.status.showMessage("Video tampil di proyektor.")
             return
 
@@ -391,9 +394,12 @@ class OperatorWindow(QMainWindow):
         dv = self.preview.doc_viewer
         fraksi_v, fraksi_h, zrel = dv.fraksi_scroll, dv.fraksi_scroll_h, dv.zoom_relatif
         slideshow = self._pakai_slideshow(item)
+        item_id = item.id
         self._jalankan_worker(
             RenderWorker(self.renderer, item),
-            lambda doc: self.wm.tampilkan_paged_ke_proyektor(doc, judul, fraksi_v, fraksi_h, zrel, slideshow),
+            lambda doc: self.wm.tampilkan_paged_ke_proyektor(
+                doc, judul, fraksi_v, fraksi_h, zrel, slideshow, item_id
+            ),
             self._on_render_gagal,
         )
 

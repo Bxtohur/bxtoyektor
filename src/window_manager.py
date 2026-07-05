@@ -23,6 +23,11 @@ class WindowManager(QObject):
         self._sync_aktif = True
         self._operator_panel: PreviewPanel | None = None
         self._video_mirror_terpasang = False
+        # Identitas file yang sedang dilihat operator vs yang tampil di proyektor.
+        # Sinkronisasi hanya berlaku bila keduanya SAMA — supaya memilih file baru
+        # di operator TIDAK menggeser proyektor sampai ditekan "Tampilkan ke Proyektor".
+        self._id_operator: str | None = None
+        self._id_proyektor: str | None = None
 
     # ---- deteksi monitor (F-4.1) --------------------------------------
     @staticmethod
@@ -86,6 +91,19 @@ class WindowManager(QObject):
     def sync_aktif(self) -> bool:
         return self._sync_aktif
 
+    def set_item_operator(self, item_id: str | None) -> None:
+        """Catat file yang sedang dilihat operator (dipanggil saat pilih hasil)."""
+        self._id_operator = item_id
+
+    def _boleh_sinkron(self) -> bool:
+        """Sync hanya bila proyektor terbuka & file operator == file proyektor."""
+        return (
+            self._sync_aktif
+            and self.presentasi_terbuka
+            and self._id_proyektor is not None
+            and self._id_operator == self._id_proyektor
+        )
+
     def tampilkan_paged_ke_proyektor(
         self,
         doc: RenderedDocument,
@@ -94,8 +112,10 @@ class WindowManager(QObject):
         fraksi_h: float,
         zoom_relatif: float,
         slideshow: bool = False,
+        item_id: str | None = None,
     ) -> None:
         """Dorong dokumen halaman ke proyektor — HANYA setelah konfirmasi (F-4.3)."""
+        self._id_proyektor = item_id  # mulai sekarang proyektor & operator sinkron
         if self.presentation is None:
             self.buka_presentasi()
         assert self.presentation is not None
@@ -109,7 +129,7 @@ class WindowManager(QObject):
 
         self.presentation.transisi_ganti(_swap)  # fade-out → swap → fade-in
 
-    def tampilkan_video_ke_proyektor(self, path: str, judul: str) -> None:
+    def tampilkan_video_ke_proyektor(self, path: str, judul: str, item_id: str | None = None) -> None:
         """Dorong video ke proyektor dengan operator sebagai MASTER (F-4.3/F-4.4).
 
         - Operator (laptop) = pengendali: play/pause/seek-nya mengatur proyektor.
@@ -117,6 +137,7 @@ class WindowManager(QObject):
           di-mute selama tampil).
         - Posisi proyektor mengejar posisi operator (koreksi drift) selama sync aktif.
         """
+        self._id_proyektor = item_id
         if self.presentation is None:
             self.buka_presentasi()
         assert self.presentation is not None
@@ -172,9 +193,18 @@ class WindowManager(QObject):
             return None
         return self.presentation.preview.video_viewer
 
+    def _video_sama(self) -> bool:
+        """Video operator == video proyektor (jangan kendalikan proyektor saat
+        operator sedang melihat/pratinjau video LAIN yang belum ditampilkan)."""
+        return (
+            self.presentasi_terbuka
+            and self._id_proyektor is not None
+            and self._id_operator == self._id_proyektor
+        )
+
     def _mirror_video_state(self, state) -> None:
         proj = self._proj_video()
-        if proj is None or not self.presentasi_terbuka:
+        if proj is None or not self._video_sama():
             return
         st = self._operator_panel.video_viewer.player.PlaybackState
         if state == st.PlayingState:
@@ -187,16 +217,17 @@ class WindowManager(QObject):
     def _mirror_video_position(self, pos: int) -> None:
         """Koreksi drift: samakan posisi proyektor bila selisih > 400 ms."""
         proj = self._proj_video()
-        if proj is None or not self.presentasi_terbuka or not self._sync_aktif:
+        if proj is None or not self._sync_aktif or not self._video_sama():
             return
         if abs(proj.posisi() - pos) > 400:
             proj.set_posisi(pos)
 
     def _on_operator_state_berubah(self, fraksi_v: float, fraksi_h: float, zoom_relatif: float) -> None:
-        """Sinkronkan posisi scroll (atas-bawah & kiri-kanan) + zoom ke proyektor
-        bila sync aktif (F-4.4), sehingga tampilan sama meski resolusi layar beda.
+        """Sinkronkan posisi scroll + zoom ke proyektor — hanya bila file operator
+        == file proyektor (F-4.4). Memilih file baru di operator TIDAK menggeser
+        proyektor sampai ditekan "Tampilkan ke Proyektor".
         """
-        if not self._sync_aktif or not self.presentasi_terbuka:
+        if not self._boleh_sinkron():
             return
         assert self.presentation is not None
         self.presentation.preview.doc_viewer.terapkan_state(fraksi_v, fraksi_h, zoom_relatif)
