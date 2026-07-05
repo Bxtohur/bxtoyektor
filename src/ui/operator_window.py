@@ -10,7 +10,7 @@ import webbrowser
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -48,6 +49,8 @@ class OperatorWindow(QMainWindow):
         self.wm = WindowManager(self)
         self.pool = QThreadPool.globalInstance()
         self._item_aktif: DocumentItem | None = None
+        # Berbagi layar aktif: None | ("screen", QScreen) | ("window", QCapturableWindow)
+        self._share_aktif: tuple | None = None
         # Simpan referensi worker yang sedang berjalan agar tidak di-GC sebelum
         # sinyalnya terkirim (kalau tidak, status "Memuat…" bisa nyangkut).
         self._workers: set = set()
@@ -88,6 +91,9 @@ class OperatorWindow(QMainWindow):
         self.filter_sheet.addItem("Semua Kategori", None)
         self.filter_sheet.currentIndexChanged.connect(lambda _: self._jalankan_pencarian())
 
+        self.btn_share = QPushButton("Share Layar ▾")  # live screen/window share
+        self.btn_share.clicked.connect(self._buka_menu_share)
+
         self.btn_presentasi = QPushButton("Buka Jendela Presentasi")  # F-4.1
         self.btn_presentasi.clicked.connect(self._buka_presentasi)
 
@@ -96,6 +102,7 @@ class OperatorWindow(QMainWindow):
         header.addWidget(self.btn_refresh)
         header.addWidget(self.input_cari, 1)
         header.addWidget(self.filter_sheet)
+        header.addWidget(self.btn_share)
         header.addWidget(self.btn_presentasi)
         root.addLayout(header)
 
@@ -147,6 +154,7 @@ class OperatorWindow(QMainWindow):
 
         self.preview = PreviewPanel(kontrol_video=True)
         self.preview.halaman_berubah.connect(self._on_halaman_berubah)
+        self.preview.screen_viewer.error.connect(self._on_share_error)
         self.wm.hubungkan_operator(self.preview)
         v.addWidget(self.preview, 1)
 
@@ -285,6 +293,7 @@ class OperatorWindow(QMainWindow):
     def _pilih_hasil(self, lw: QListWidgetItem) -> None:
         item: DocumentItem = lw.data(_ROLE_ITEM)
         self._item_aktif = item
+        self._share_aktif = None  # memilih file menghentikan berbagi layar
         # Catat file yang sedang dilihat operator; proyektor tidak ikut bergeser
         # sampai file ini benar-benar "Ditampilkan ke Proyektor".
         self.wm.set_item_operator(item.id)
@@ -357,6 +366,53 @@ class OperatorWindow(QMainWindow):
             p = Path(item.cache_path or item.lokasi)
             webbrowser.open(p.parent.as_uri() if p.exists() else item.lokasi)
 
+    # ---- Berbagi layar / window ---------------------------------------
+    def _buka_menu_share(self) -> None:
+        menu = QMenu(self)
+        layar_menu = menu.addMenu("Seluruh Layar")
+        for i, scr in enumerate(QGuiApplication.screens()):
+            g = scr.geometry()
+            label = f"Layar {i + 1} — {g.width()}×{g.height()}"
+            if scr is QGuiApplication.primaryScreen():
+                label += " (utama)"
+            layar_menu.addAction(label, lambda s=scr: self._mulai_share_screen(s))
+
+        win_menu = menu.addMenu("Window")
+        windows = self.preview.screen_viewer.daftar_window()
+        if not windows:
+            win_menu.addAction("(tidak ada window)").setEnabled(False)
+        for w in windows:
+            desk = w.description() or "(tanpa judul)"
+            win_menu.addAction(desk[:60], lambda win=w: self._mulai_share_window(win))
+
+        menu.exec(self.btn_share.mapToGlobal(self.btn_share.rect().bottomLeft()))
+
+    def _mulai_share_screen(self, screen) -> None:
+        self._item_aktif = None
+        self._share_aktif = ("screen", screen)
+        self.wm.set_item_operator("__screen__")
+        self._set_kontrol_paged(False)
+        self.preview.tampilkan_share_screen(screen)
+        self.status.showMessage("Pratinjau berbagi layar. Tekan 'Tampilkan ke Proyektor' untuk mulai.")
+
+    def _mulai_share_window(self, window) -> None:
+        self._item_aktif = None
+        self._share_aktif = ("window", window)
+        self.wm.set_item_operator("__screen__")
+        self._set_kontrol_paged(False)
+        self.preview.tampilkan_share_window(window)
+        self.status.showMessage("Pratinjau berbagi window. Tekan 'Tampilkan ke Proyektor' untuk mulai.")
+
+    def _on_share_error(self, pesan: str) -> None:
+        """Tampilkan pesan jelas bila berbagi layar tidak didukung sistem."""
+        if "0x887a0004" in pesan or "not supported" in pesan.lower():
+            pesan = (
+                "Berbagi layar tidak didukung di sistem ini. Ini biasa terjadi pada "
+                "Remote Desktop, mesin virtual, atau driver GPU tertentu. Coba di "
+                "komputer/monitor fisik."
+            )
+        self.status.showMessage(f"Berbagi layar: {pesan}")
+
     # ---- Presentasi / proyektor ---------------------------------------
     def _buka_presentasi(self) -> None:
         self.wm.buka_presentasi(self.settings.monitor_presentasi)
@@ -371,9 +427,23 @@ class OperatorWindow(QMainWindow):
         self.settings.sync_scroll = aktif
 
     def _tampilkan_ke_proyektor(self) -> None:  # F-4.3 (2-step)
+        # Berbagi layar/window aktif → tampilkan capture live ke proyektor.
+        if self._share_aktif is not None:
+            if not self.wm.presentasi_terbuka:
+                self._buka_presentasi()
+            mode, sumber = self._share_aktif
+            if mode == "screen":
+                self.wm.tampilkan_share_screen_ke_proyektor(sumber, "Berbagi Layar")
+            else:
+                self.wm.tampilkan_share_window_ke_proyektor(
+                    sumber, sumber.description() or "Berbagi Window"
+                )
+            self.status.showMessage("Berbagi layar tampil di proyektor.")
+            return
+
         item = self._item_aktif
         if not item:
-            QMessageBox.information(self, "Belum ada dokumen", "Pilih dokumen dulu.")
+            QMessageBox.information(self, "Belum ada dokumen", "Pilih dokumen atau mulai berbagi layar dulu.")
             return
         if item.sumber == Sumber.DRIVE or item.kind == MediaKind.LAINNYA:
             QMessageBox.information(

@@ -24,6 +24,7 @@ class MediaKind(StrEnum):
 
     PAGED = "paged"   # dirender jadi halaman gambar (pdf/docx/pptx/gambar)
     VIDEO = "video"   # diputar dengan media player
+    SCREEN = "screen"  # berbagi layar/window langsung (bukan dari file)
     LAINNYA = "lainnya"  # tidak bisa dipreview native
 
 

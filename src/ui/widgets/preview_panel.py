@@ -9,11 +9,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QScreen
+from PySide6.QtMultimedia import QCapturableWindow
 from PySide6.QtWidgets import QLabel, QStackedWidget, QVBoxLayout, QWidget
 
 from ...data.models import MediaKind
 from ...render.document_renderer import RenderedDocument
 from .document_viewer import DocumentViewer
+from .screen_share_viewer import ScreenShareViewer
 from .video_viewer import VideoViewer
 
 
@@ -26,14 +29,16 @@ class PreviewPanel(QWidget):
         super().__init__(parent)
         self.doc_viewer = DocumentViewer(sembunyikan_scrollbar=not scrollbar)
         self.video_viewer = VideoViewer(kontrol=kontrol_video)
+        self.screen_viewer = ScreenShareViewer()
         self._pesan = QLabel("Belum ada dokumen dipilih.")
         self._pesan.setWordWrap(True)
         self._pesan.setStyleSheet("padding:24px; color:#666;")
 
         self._stack = QStackedWidget()
-        self._stack.addWidget(self.doc_viewer)    # index 0
-        self._stack.addWidget(self.video_viewer)  # index 1
-        self._stack.addWidget(self._pesan)         # index 2
+        self._stack.addWidget(self.doc_viewer)     # index 0
+        self._stack.addWidget(self.video_viewer)   # index 1
+        self._stack.addWidget(self.screen_viewer)  # index 2
+        self._stack.addWidget(self._pesan)          # index 3
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -51,18 +56,35 @@ class PreviewPanel(QWidget):
         self, doc: RenderedDocument, fraksi: float = 0.0, zoom: float | None = None, slideshow: bool = False
     ) -> None:
         self.video_viewer.stop()
+        self.screen_viewer.stop()
         self._kind = MediaKind.PAGED
         self.doc_viewer.tampilkan(doc, fraksi=fraksi, zoom=zoom, slideshow=slideshow)
         self._stack.setCurrentWidget(self.doc_viewer)
 
     def tampilkan_video(self, path: str | Path, auto_play: bool = True) -> None:
+        self.screen_viewer.stop()
         self._kind = MediaKind.VIDEO
         self.doc_viewer.kosongkan()
         self.video_viewer.putar(path, auto_play=auto_play)
         self._stack.setCurrentWidget(self.video_viewer)
 
+    def tampilkan_share_screen(self, screen: QScreen) -> None:
+        self.video_viewer.stop()
+        self.doc_viewer.kosongkan()
+        self._kind = MediaKind.SCREEN
+        self.screen_viewer.share_screen(screen)
+        self._stack.setCurrentWidget(self.screen_viewer)
+
+    def tampilkan_share_window(self, window: QCapturableWindow) -> None:
+        self.video_viewer.stop()
+        self.doc_viewer.kosongkan()
+        self._kind = MediaKind.SCREEN
+        self.screen_viewer.share_window(window)
+        self._stack.setCurrentWidget(self.screen_viewer)
+
     def kosongkan(self, pesan: str = "Belum ada dokumen dipilih.") -> None:
         self.video_viewer.stop()
+        self.screen_viewer.stop()
         self.doc_viewer.kosongkan()
         self._kind = MediaKind.LAINNYA
         self._pesan.setText(pesan)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtGui import QGuiApplication, QScreen
+from PySide6.QtMultimedia import QCapturableWindow
 
 from .render.document_renderer import RenderedDocument
 from .ui.presentation_window import PresentationWindow
@@ -178,6 +179,28 @@ class WindowManager(QObject):
             self._pasang_mirror_video()
 
         self.presentation.transisi_ganti(_swap)  # fade-out → swap → fade-in
+
+    def tampilkan_share_screen_ke_proyektor(self, screen: QScreen, judul: str) -> None:
+        """Tampilkan berbagi seluruh layar ke proyektor (F-4.3, dengan fade)."""
+        self._id_proyektor = "__screen__"
+        if self.presentation is None:
+            self.buka_presentasi()
+        assert self.presentation is not None
+        self.presentation.transisi_ganti(
+            lambda: (self.presentation.set_judul(judul),
+                     self.presentation.preview.tampilkan_share_screen(screen))
+        )
+
+    def tampilkan_share_window_ke_proyektor(self, window: QCapturableWindow, judul: str) -> None:
+        """Tampilkan berbagi satu window ke proyektor (F-4.3, dengan fade)."""
+        self._id_proyektor = "__screen__"
+        if self.presentation is None:
+            self.buka_presentasi()
+        assert self.presentation is not None
+        self.presentation.transisi_ganti(
+            lambda: (self.presentation.set_judul(judul),
+                     self.presentation.preview.tampilkan_share_window(window))
+        )
 
     def _pasang_mirror_video(self) -> None:
         """Sambungkan sinyal player operator → proyektor (sekali saja)."""
