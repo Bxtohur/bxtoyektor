@@ -63,7 +63,9 @@ class TipeFile(StrEnum):
 
 
 # Kelompok tipe → cara preview.
-_DOKUMEN_PAGED = {TipeFile.PDF, TipeFile.DOCX, TipeFile.DOC, TipeFile.PPTX, TipeFile.PPT}
+_DOKUMEN_PAGED = {
+    TipeFile.PDF, TipeFile.DOCX, TipeFile.DOC, TipeFile.PPTX, TipeFile.PPT, TipeFile.XLSX,
+}
 _GAMBAR = {TipeFile.PNG, TipeFile.JPG, TipeFile.GIF, TipeFile.BMP, TipeFile.WEBP}
 _VIDEO = {TipeFile.MP4, TipeFile.MKV, TipeFile.MOV, TipeFile.AVI, TipeFile.WEBM, TipeFile.M4V}
 

@@ -21,7 +21,7 @@ from .models import DocumentItem, MediaKind, TipeFile, kind_dari_tipe
 # Ekstensi yang diindeks (yang bisa dipreview native).
 _EKSTENSI_DIDUKUNG = {
     t.value for t in TipeFile if kind_dari_tipe(t) != MediaKind.LAINNYA
-} | {"jpeg"}
+} | {"jpeg", "xls"}  # jpeg = alias jpg; xls = alias xlsx (Excel lama)
 
 # Folder yang dilewati agar pemindaian tetap cepat & bersih.
 _SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "$RECYCLE.BIN", "System Volume Information"}

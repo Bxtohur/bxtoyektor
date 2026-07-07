@@ -26,7 +26,7 @@ from PySide6.QtGui import QImage
 from ..data.models import DocumentItem, Sumber, TipeFile
 
 _TIPE_GAMBAR = {TipeFile.PNG, TipeFile.JPG, TipeFile.GIF, TipeFile.BMP, TipeFile.WEBP}
-_TIPE_OFFICE = {TipeFile.DOCX, TipeFile.DOC, TipeFile.PPTX, TipeFile.PPT}
+_TIPE_OFFICE = {TipeFile.DOCX, TipeFile.DOC, TipeFile.PPTX, TipeFile.PPT, TipeFile.XLSX}
 
 
 class RenderError(Exception):

@@ -12,6 +12,7 @@ def test_deteksi_tipe_dari_ekstensi():
 
 def test_kind_media():
     assert DocumentItem("s", "k", "n", "a.pptx").kind == MediaKind.PAGED
+    assert DocumentItem("s", "k", "n", "a.xlsx").kind == MediaKind.PAGED  # Excel bisa dipreview
     assert DocumentItem("s", "k", "n", "a.mp4").kind == MediaKind.VIDEO
     assert DocumentItem("s", "k", "n", "a.zip").kind == MediaKind.LAINNYA
 
