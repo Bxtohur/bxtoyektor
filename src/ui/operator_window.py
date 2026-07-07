@@ -37,6 +37,7 @@ from ..render.document_renderer import DocumentRenderer, RenderedDocument
 from ..search.index import SearchIndex
 from ..settings import Settings, cache_dir
 from ..window_manager import WindowManager
+from .excel_editor import ExcelEditorDialog
 from .widgets.preview_panel import PreviewPanel
 from .workers import ImportExcelWorker, RenderWorker, ScanFolderWorker
 
@@ -89,6 +90,8 @@ class OperatorWindow(QMainWindow):
         self.btn_buka_folder.clicked.connect(self._pilih_folder)
         self.btn_buka_excel = QPushButton("Buka Excel…")
         self.btn_buka_excel.clicked.connect(self._pilih_excel)
+        self.btn_edit_excel = QPushButton("Edit Excel…")
+        self.btn_edit_excel.clicked.connect(self._edit_excel)
         self.btn_refresh = QPushButton("Refresh")  # F-1.4
         self.btn_refresh.clicked.connect(self._refresh_data)
 
@@ -108,6 +111,7 @@ class OperatorWindow(QMainWindow):
 
         header.addWidget(self.btn_buka_folder)
         header.addWidget(self.btn_buka_excel)
+        header.addWidget(self.btn_edit_excel)
         header.addWidget(self.btn_refresh)
         header.addWidget(self.input_cari, 1)
         header.addWidget(self.filter_sheet)
@@ -251,6 +255,29 @@ class OperatorWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Pilih file Excel", "", "Excel (*.xlsx *.xls)")
         if path:
             self._import_excel(path)
+
+    def _edit_excel(self) -> None:
+        awal = self.settings.sumber_terakhir if self.settings.sumber_tipe == "excel" else ""
+        path, _ = QFileDialog.getOpenFileName(self, "Pilih Excel untuk diedit", awal, "Excel (*.xlsx)")
+        if not path:
+            return
+        try:
+            dlg = ExcelEditorDialog(path, self)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Gagal membuka Excel", str(exc))
+            return
+        dlg.tersimpan.connect(self._on_excel_tersimpan)
+        self._excel_editor = dlg  # simpan referensi agar tidak di-GC
+        dlg.show()
+
+    def _on_excel_tersimpan(self, path: str) -> None:
+        # Bila yang diedit adalah sumber data aktif → muat ulang daftarnya.
+        if self.settings.sumber_tipe == "excel" and self.settings.sumber_terakhir:
+            if Path(path) == Path(self.settings.sumber_terakhir):
+                self._import_excel(path)
+                self.status.showMessage(f"Excel disimpan & daftar diperbarui: {Path(path).name}")
+                return
+        self.status.showMessage(f"Excel disimpan: {Path(path).name}")
 
     def _refresh_data(self) -> None:  # F-1.4
         src = self.settings.sumber_terakhir
