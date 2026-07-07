@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import fitz  # PyMuPDF
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
 
 from ..data.models import DocumentItem, Sumber, TipeFile
@@ -96,7 +97,15 @@ class RenderedDocument:
     def halaman(self, indeks: int, zoom: float = 1.0) -> QImage:
         """Render satu halaman ke QImage pada level zoom tertentu."""
         if self._gambar is not None:
-            return self._gambar
+            # Gambar diskalakan ke ukuran yang diminta (jaga rasio) agar TIDAK
+            # terpotong saat ditempel ke label berukuran zoom.
+            if abs(zoom - 1.0) < 1e-6:
+                return self._gambar
+            w = max(1, int(self._gambar.width() * zoom))
+            h = max(1, int(self._gambar.height() * zoom))
+            return self._gambar.scaled(
+                w, h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            )
         if self._doc is None or not (0 <= indeks < self._doc.page_count):
             raise RenderError(f"Halaman {indeks + 1} di luar jangkauan.")
         page = self._doc.load_page(indeks)

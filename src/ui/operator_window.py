@@ -534,10 +534,13 @@ class OperatorWindow(QMainWindow):
             self._on_render_gagal,
         )
 
-    @staticmethod
-    def _pakai_slideshow(item: DocumentItem | None) -> bool:
-        """PPTX/PPT ditampilkan sebagai slide show (satu slide penuh per layar)."""
-        return item is not None and item.tipe_file in {TipeFile.PPTX, TipeFile.PPT}
+    _TIPE_GAMBAR = {TipeFile.PNG, TipeFile.JPG, TipeFile.GIF, TipeFile.BMP, TipeFile.WEBP}
+
+    @classmethod
+    def _pakai_slideshow(cls, item: DocumentItem | None) -> bool:
+        """Tampil fit penuh ke layar (satu tampilan, tanpa scroll):
+        PPTX/PPT (slide) DAN gambar/foto (agar utuh, tidak terpotong)."""
+        return item is not None and item.tipe_file in ({TipeFile.PPTX, TipeFile.PPT} | cls._TIPE_GAMBAR)
 
     def _on_render_selesai(self, doc: RenderedDocument) -> None:
         item = self._item_aktif
@@ -550,7 +553,9 @@ class OperatorWindow(QMainWindow):
         n = self.preview.doc_viewer.jumlah_halaman
         self.spin_halaman.setMaximum(max(1, n))
         self.lbl_total.setText(f"/ {n}")
-        if slideshow:
+        if slideshow and item is not None and item.tipe_file in self._TIPE_GAMBAR:
+            self.status.showMessage("Gambar pas layar. Siap tampilkan ke proyektor.")
+        elif slideshow:
             self.status.showMessage(f"Slide {self.preview.doc_viewer.halaman_aktif + 1}/{n} — ◀/▶ ganti slide, lalu tampilkan ke proyektor.")
         else:
             self.status.showMessage("Siap. Cek dokumen sebelum tampil ke proyektor.")
