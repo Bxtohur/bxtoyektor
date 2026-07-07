@@ -9,14 +9,16 @@ from __future__ import annotations
 import webbrowser
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThreadPool, QTimer
+from PySide6.QtCore import QFileInfo, QSize, Qt, QThreadPool, QTimer
 from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
+    QFileIconProvider,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListView,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -29,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..data.folder_scanner import list_dir
 from ..data.models import DocumentItem, MediaKind, Sumber, TipeFile
 from ..render.document_renderer import DocumentRenderer, RenderedDocument
 from ..search.index import SearchIndex
@@ -37,7 +40,8 @@ from ..window_manager import WindowManager
 from .widgets.preview_panel import PreviewPanel
 from .workers import ImportExcelWorker, RenderWorker, ScanFolderWorker
 
-_ROLE_ITEM = Qt.ItemDataRole.UserRole
+_ROLE_ITEM = Qt.ItemDataRole.UserRole      # DocumentItem (berkas)
+_ROLE_FOLDER = Qt.ItemDataRole.UserRole + 1  # str path (folder, untuk jelajah)
 
 
 class OperatorWindow(QMainWindow):
@@ -51,6 +55,10 @@ class OperatorWindow(QMainWindow):
         self._item_aktif: DocumentItem | None = None
         # Berbagi layar aktif: None | ("screen", QScreen) | ("window", QCapturableWindow)
         self._share_aktif: tuple | None = None
+        # Jelajah folder (mode Explorer): akar + folder yang sedang dibuka.
+        self._root_dir: Path | None = None
+        self._current_dir: Path | None = None
+        self._icon_provider = QFileIconProvider()
         # Simpan referensi worker yang sedang berjalan agar tidak di-GC sebelum
         # sinyalnya terkirim (kalau tidak, status "Memuat…" bisa nyangkut).
         self._workers: set = set()
@@ -107,9 +115,7 @@ class OperatorWindow(QMainWindow):
         root.addLayout(header)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.list_hasil = QListWidget()
-        self.list_hasil.itemClicked.connect(self._pilih_hasil)
-        splitter.addWidget(self.list_hasil)
+        splitter.addWidget(self._bangun_panel_kiri())
         splitter.addWidget(self._bangun_panel_preview())
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([self.settings.lebar_panel_kiri, 820])
@@ -118,6 +124,39 @@ class OperatorWindow(QMainWindow):
 
         self.status = self.statusBar()
         self.status.showMessage("Buka folder atau file Excel untuk memulai.")
+
+    def _bangun_panel_kiri(self) -> QWidget:
+        wrap = QWidget()
+        v = QVBoxLayout(wrap)
+        v.setContentsMargins(0, 0, 0, 0)
+
+        # Bar navigasi: Naik + breadcrumb + toggle List/Icon.
+        nav = QHBoxLayout()
+        self.btn_naik = QPushButton("⬆")
+        self.btn_naik.setToolTip("Naik ke folder induk")
+        self.btn_naik.setFixedWidth(32)
+        self.btn_naik.clicked.connect(self._naik_folder)
+        self.lbl_path = QLabel("—")
+        self.lbl_path.setStyleSheet("color:#666;")
+        self.btn_view = QPushButton("▦ Icon")
+        self.btn_view.setToolTip("Ganti tampilan List / Icon")
+        self.btn_view.setCheckable(True)
+        self.btn_view.setFixedWidth(72)
+        self.btn_view.toggled.connect(self._toggle_view)
+        nav.addWidget(self.btn_naik)
+        nav.addWidget(self.lbl_path, 1)
+        nav.addWidget(self.btn_view)
+        v.addLayout(nav)
+
+        self.list_hasil = QListWidget()
+        self.list_hasil.itemClicked.connect(self._pilih_hasil)
+        self.list_hasil.itemDoubleClicked.connect(self._double_click_hasil)
+        self.list_hasil.setWordWrap(True)
+        self.list_hasil.setUniformItemSizes(False)
+        self.list_hasil.setResizeMode(QListView.ResizeMode.Adjust)
+        v.addWidget(self.list_hasil, 1)
+        self._set_view_mode(icon=False)
+        return wrap
 
     def _bangun_panel_preview(self) -> QWidget:
         wrap = QWidget()
@@ -253,6 +292,13 @@ class OperatorWindow(QMainWindow):
         self.settings.sumber_terakhir = path
         self.settings.sumber_tipe = tipe
         self.settings.save()
+        # Mode jelajah folder hanya untuk sumber folder.
+        if tipe == "folder":
+            self._root_dir = Path(path)
+            self._current_dir = Path(path)
+        else:
+            self._root_dir = None
+            self._current_dir = None
         self.filter_sheet.blockSignals(True)
         self.filter_sheet.clear()
         self.filter_sheet.addItem("Semua Kategori", None)
@@ -269,29 +315,112 @@ class OperatorWindow(QMainWindow):
         QMessageBox.critical(self, "Gagal memuat data", err)
         self.status.showMessage("Gagal memuat data.")
 
-    # ---- Pencarian -----------------------------------------------------
+    # ---- Pencarian & Jelajah -------------------------------------------
     def _jalankan_pencarian(self) -> None:
-        query = self.input_cari.text()
+        query = self.input_cari.text().strip()
+        # Kotak cari kosong + sumber folder → tampilkan isi folder (mode jelajah).
+        if not query and self._root_dir is not None:
+            self._tampilkan_browse()
+            return
         sheet = self.filter_sheet.currentData()
         hasil = self.index.cari(query, sheet=sheet)
         self.list_hasil.clear()
         for h in hasil:
-            it = h.item
-            label_kind = {MediaKind.VIDEO: "🎬 ", MediaKind.PAGED: ""}.get(it.kind, "")
-            teks = f"{label_kind}{it.nama_file}"
-            teks += f"\n{it.kategori} · {it.sheet}" if it.kategori else f"\n{it.sheet}"
-            lw = QListWidgetItem(teks)
-            lw.setData(_ROLE_ITEM, it)
-            self.list_hasil.addItem(lw)
+            self.list_hasil.addItem(self._buat_item_file(h.item, lokasi=True))
         self.status.showMessage(
             f"{len(hasil)} hasil untuk '{query}'." if query else f"{len(hasil)} item."
         )
         if query:
             self.settings.tambah_riwayat(query)
+        self._perbarui_nav(browse=False)
+
+    def _tampilkan_browse(self) -> None:
+        """Tampilkan isi 1 folder (subfolder + berkas) — mode Explorer."""
+        self.list_hasil.clear()
+        subs, files = list_dir(self._root_dir, self._current_dir)
+        for d in subs:
+            self.list_hasil.addItem(self._buat_item_folder(d))
+        for it in files:
+            self.list_hasil.addItem(self._buat_item_file(it, lokasi=False))
+        self._perbarui_nav(browse=True)
+        self.status.showMessage(f"{len(subs)} folder · {len(files)} berkas")
+
+    def _buat_item_folder(self, path: Path) -> QListWidgetItem:
+        lw = QListWidgetItem(self._icon_provider.icon(QFileIconProvider.IconType.Folder), path.name)
+        lw.setData(_ROLE_FOLDER, str(path))
+        lw.setToolTip(str(path))
+        return lw
+
+    def _buat_item_file(self, it: DocumentItem, lokasi: bool) -> QListWidgetItem:
+        if it.sumber == Sumber.LOCAL:
+            icon = self._icon_provider.icon(QFileInfo(it.lokasi))
+        else:
+            icon = self._icon_provider.icon(QFileIconProvider.IconType.File)
+        teks = it.nama_file
+        lw = QListWidgetItem(icon, teks)
+        lw.setData(_ROLE_ITEM, it)
+        detail = f"{it.kategori} · {it.sheet}" if it.kategori else it.sheet
+        lw.setToolTip(detail if not lokasi else f"{it.nama_file}\n{detail}")
+        return lw
+
+    def _perbarui_nav(self, browse: bool) -> None:
+        folder_mode = self._root_dir is not None
+        self.btn_naik.setVisible(folder_mode)
+        self.lbl_path.setVisible(folder_mode)
+        if not folder_mode:
+            return
+        if browse and self._current_dir is not None:
+            rel = self._current_dir.relative_to(self._root_dir)
+            crumbs = self._root_dir.name + ("/" + str(rel) if str(rel) != "." else "")
+            self.lbl_path.setText("📁 " + crumbs.replace("\\", "/"))
+            self.btn_naik.setEnabled(self._current_dir != self._root_dir)
+        else:
+            self.lbl_path.setText("🔎 Hasil pencarian")
+            self.btn_naik.setEnabled(False)
+
+    def _masuk_folder(self, path: str) -> None:
+        self._current_dir = Path(path)
+        self.input_cari.blockSignals(True)
+        self.input_cari.clear()
+        self.input_cari.blockSignals(False)
+        self._tampilkan_browse()
+
+    def _naik_folder(self) -> None:
+        if self._current_dir and self._root_dir and self._current_dir != self._root_dir:
+            self._current_dir = self._current_dir.parent
+            self._tampilkan_browse()
+
+    def _double_click_hasil(self, lw: QListWidgetItem) -> None:
+        folder = lw.data(_ROLE_FOLDER)
+        if folder:
+            self._masuk_folder(folder)
+
+    # ---- Tampilan List / Icon -----------------------------------------
+    def _set_view_mode(self, icon: bool) -> None:
+        if icon:
+            self.list_hasil.setViewMode(QListView.ViewMode.IconMode)
+            self.list_hasil.setIconSize(QSize(56, 56))
+            self.list_hasil.setGridSize(QSize(112, 92))
+            self.list_hasil.setFlow(QListView.Flow.LeftToRight)
+            self.list_hasil.setWrapping(True)
+            self.btn_view.setText("☰ List")
+        else:
+            self.list_hasil.setViewMode(QListView.ViewMode.ListMode)
+            self.list_hasil.setIconSize(QSize(22, 22))
+            self.list_hasil.setGridSize(QSize())
+            self.list_hasil.setFlow(QListView.Flow.TopToBottom)
+            self.list_hasil.setWrapping(False)
+            self.btn_view.setText("▦ Icon")
+        self.list_hasil.setMovement(QListView.Movement.Static)
+
+    def _toggle_view(self, icon: bool) -> None:
+        self._set_view_mode(icon)
 
     # ---- Preview -------------------------------------------------------
     def _pilih_hasil(self, lw: QListWidgetItem) -> None:
-        item: DocumentItem = lw.data(_ROLE_ITEM)
+        item: DocumentItem | None = lw.data(_ROLE_ITEM)
+        if item is None:  # folder → dibuka lewat double-click, bukan preview
+            return
         self._item_aktif = item
         self._share_aktif = None  # memilih file menghentikan berbagi layar
         # Catat file yang sedang dilihat operator; proyektor tidak ikut bergeser

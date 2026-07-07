@@ -86,3 +86,27 @@ def scan_folder(root: str | Path) -> HasilScan:
     if not items:
         peringatan.append("Tidak ada berkas yang bisa dipreview ditemukan di folder ini.")
     return HasilScan(items=items, peringatan=peringatan)
+
+
+def list_dir(root: str | Path, current: str | Path) -> tuple[list[Path], list[DocumentItem]]:
+    """Isi SATU level folder `current` (untuk mode jelajah ala Explorer).
+
+    Return (subfolders, files) — subfolder diurut nama, file jadi DocumentItem.
+    Hanya file yang bisa dipreview yang ditampilkan.
+    """
+    root = Path(root)
+    current = Path(current)
+    subfolders: list[Path] = []
+    files: list[DocumentItem] = []
+    if not current.is_dir():
+        return subfolders, files
+    for entry in sorted(current.iterdir(), key=lambda p: p.name.lower()):
+        nama = entry.name
+        if nama.startswith("~$"):
+            continue
+        if entry.is_dir():
+            if nama not in _SKIP_DIRS:
+                subfolders.append(entry)
+        elif _didukung(nama):
+            files.append(_buat_item(root, entry))
+    return subfolders, files
