@@ -198,9 +198,36 @@ class OperatorWindow(QMainWindow):
             bar.addWidget(w)
         v.addLayout(bar)
 
+        # Bar cari DI DALAM dokumen (PDF): sorot + navigasi hasil.
+        cari_bar = QHBoxLayout()
+        self.input_cari_doc = QLineEdit()
+        self.input_cari_doc.setPlaceholderText("Cari di dokumen…  (Enter: berikutnya)")
+        self.input_cari_doc.textChanged.connect(lambda _: self._debounce_doc.start())
+        self.input_cari_doc.returnPressed.connect(lambda: self.preview.doc_viewer.match_berikutnya())
+        self.btn_match_prev = QPushButton("‹")
+        self.btn_match_prev.setFixedWidth(28)
+        self.btn_match_prev.clicked.connect(lambda: self.preview.doc_viewer.match_sebelumnya())
+        self.btn_match_next = QPushButton("›")
+        self.btn_match_next.setFixedWidth(28)
+        self.btn_match_next.clicked.connect(lambda: self.preview.doc_viewer.match_berikutnya())
+        self.lbl_match = QLabel("0/0")
+        cari_bar.addWidget(QLabel("🔎"))
+        cari_bar.addWidget(self.input_cari_doc, 1)
+        cari_bar.addWidget(self.btn_match_prev)
+        cari_bar.addWidget(self.lbl_match)
+        cari_bar.addWidget(self.btn_match_next)
+        v.addLayout(cari_bar)
+
+        self._debounce_doc = QTimer(self)
+        self._debounce_doc.setSingleShot(True)
+        self._debounce_doc.setInterval(250)
+        self._debounce_doc.timeout.connect(self._cari_dalam_dokumen)
+
         self.preview = PreviewPanel(kontrol_video=True)
         self.preview.halaman_berubah.connect(self._on_halaman_berubah)
         self.preview.screen_viewer.error.connect(self._on_share_error)
+        self.preview.doc_viewer.buka_url.connect(self._buka_url_link)
+        self.preview.doc_viewer.match_berubah.connect(self._on_match_berubah)
         self.wm.hubungkan_operator(self.preview)
         v.addWidget(self.preview, 1)
 
@@ -500,6 +527,11 @@ class OperatorWindow(QMainWindow):
         self.settings.save()  # persist posisi terakhir file sebelumnya
         self._item_aktif = item
         self._share_aktif = None  # memilih file menghentikan berbagi layar
+        # Reset pencarian dalam dokumen untuk file baru.
+        self.input_cari_doc.blockSignals(True)
+        self.input_cari_doc.clear()
+        self.input_cari_doc.blockSignals(False)
+        self.lbl_match.setText("0/0")
         # Catat file yang sedang dilihat operator; proyektor tidak ikut bergeser
         # sampai file ini benar-benar "Ditampilkan ke Proyektor".
         self.wm.set_item_operator(item.id)
@@ -576,6 +608,16 @@ class OperatorWindow(QMainWindow):
         item = self._item_aktif
         if item is not None and item.lokasi in self.settings.pinned:
             self.settings.posisi_terakhir[item.lokasi] = self.preview.doc_viewer.fraksi_scroll
+
+    def _cari_dalam_dokumen(self) -> None:  # cari teks di dalam PDF
+        self.preview.doc_viewer.cari_dalam(self.input_cari_doc.text())
+
+    def _on_match_berubah(self, idx: int, total: int) -> None:
+        self.lbl_match.setText(f"{idx if total else 0}/{total}")
+
+    def _buka_url_link(self, url: str) -> None:  # link di PDF diklik
+        webbrowser.open(url)
+        self.status.showMessage(f"Membuka link: {url[:70]}")
 
     def _buka_lokasi_asli(self) -> None:  # F-3.5
         if not self._item_aktif:

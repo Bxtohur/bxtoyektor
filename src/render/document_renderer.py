@@ -115,6 +115,38 @@ class RenderedDocument:
         img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
         return img.copy()
 
+    def links(self, indeks: int) -> list[dict]:
+        """Daftar link pada satu halaman PDF.
+
+        Tiap item: {'rect': (x0,y0,x1,y1) titik PDF, 'uri': str|None, 'page': int|None}.
+        Kosong untuk gambar / halaman tak valid.
+        """
+        if self._doc is None or not (0 <= indeks < self._doc.page_count):
+            return []
+        out: list[dict] = []
+        for lnk in self._doc.load_page(indeks).get_links():
+            r = lnk.get("from")
+            if r is None:
+                continue
+            out.append({
+                "rect": (r.x0, r.y0, r.x1, r.y1),
+                "uri": lnk.get("uri"),
+                "page": lnk.get("page"),  # tujuan internal (0-based) bila ada
+            })
+        return out
+
+    def cari_teks(self, teks: str, maks: int = 800) -> list[tuple[int, tuple[float, float, float, float]]]:
+        """Cari teks di seluruh halaman. Return [(indeks_halaman, (x0,y0,x1,y1) PDF), ...]."""
+        hasil: list[tuple[int, tuple[float, float, float, float]]] = []
+        if self._doc is None or not teks.strip():
+            return hasil
+        for i in range(self._doc.page_count):
+            for r in self._doc.load_page(i).search_for(teks):
+                hasil.append((i, (r.x0, r.y0, r.x1, r.y1)))
+                if len(hasil) >= maks:
+                    return hasil
+        return hasil
+
     def close(self) -> None:
         if self._doc is not None:
             self._doc.close()

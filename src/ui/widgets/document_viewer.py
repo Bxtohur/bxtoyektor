@@ -17,18 +17,42 @@ Meng-emit:
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor, QCursor, QPainter, QPixmap
 from PySide6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from ...render.document_renderer import RenderedDocument
 
 _SPACING = 12          # jarak antar halaman (px) — mode continuous
 _BUFFER_LAYAR = 1.0    # render halaman sejauh ±1 tinggi viewport dari area terlihat
+_SOROT = QColor(255, 214, 0, 110)       # sorotan hasil cari
+_SOROT_AKTIF = QColor(255, 140, 0, 150)  # sorotan hasil cari yang aktif
+
+
+class _PageLabel(QLabel):
+    """Label satu halaman yang tahu indeksnya & meneruskan event mouse (px lokal)."""
+
+    diklik = Signal(int, float, float)   # (indeks, x_px, y_px)
+    digerak = Signal(int, float, float)  # (indeks, x_px, y_px) untuk kursor link
+
+    def __init__(self, indeks: int) -> None:
+        super().__init__()
+        self._indeks = indeks
+        self.setMouseTracking(True)
+
+    def mousePressEvent(self, e) -> None:  # noqa: N802
+        p = e.position()
+        self.diklik.emit(self._indeks, p.x(), p.y())
+
+    def mouseMoveEvent(self, e) -> None:  # noqa: N802
+        p = e.position()
+        self.digerak.emit(self._indeks, p.x(), p.y())
 
 
 class DocumentViewer(QScrollArea):
     state_berubah = Signal(float, float, float)  # (fraksi_v, fraksi_h, zoom_relatif)
     halaman_berubah = Signal(int, int)           # (indeks_aktif, total)
+    buka_url = Signal(str)                        # link PDF diklik
+    match_berubah = Signal(int, int)             # (indeks_hasil_cari+1, total)
 
     def __init__(self, sembunyikan_scrollbar: bool = False, parent=None) -> None:
         super().__init__(parent)
@@ -40,6 +64,8 @@ class DocumentViewer(QScrollArea):
         self._labels: list[QLabel] = []
         self._rendered: set[int] = set()
         self._suppress = False  # cegah loop saat menerapkan state dari luar
+        self._matches: list[tuple[int, tuple]] = []  # hasil cari: (page, rect PDF)
+        self._match_idx = -1
         # Fraksi horizontal yang diinginkan, diterapkan saat range hbar sudah ada
         # (mengatasi race: range belum terhitung tepat setelah zoom/layout).
         self._target_h: float | None = None
@@ -118,6 +144,8 @@ class DocumentViewer(QScrollArea):
         self._doc = doc
         self._slideshow = slideshow
         self._slide = 0
+        self._matches = []
+        self._match_idx = -1
         self._bersihkan_labels()
         if doc is None or doc.jumlah_halaman == 0:
             self.kosongkan()
@@ -226,9 +254,11 @@ class DocumentViewer(QScrollArea):
     def _bangun_halaman(self) -> None:
         assert self._doc is not None
         for i in range(self._doc.jumlah_halaman):
-            lbl = QLabel()
+            lbl = _PageLabel(i)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet("background:#fff;" if not self._slideshow else "background:transparent;")
+            lbl.diklik.connect(self._klik_halaman)
+            lbl.digerak.connect(self._hover_halaman)
             self._vbox.addWidget(lbl, alignment=Qt.AlignmentFlag.AlignCenter)
             if self._slideshow and i != self._slide:
                 lbl.hide()
@@ -334,8 +364,7 @@ class DocumentViewer(QScrollArea):
             return
         if self._slideshow:
             if self._slide not in self._rendered:
-                img = self._doc.halaman(self._slide, zoom=self._zoom)
-                self._labels[self._slide].setPixmap(QPixmap.fromImage(img))
+                self._render_ke_label(self._slide)
                 self._rendered = {self._slide}  # cukup simpan slide aktif
             return
         vp = self.viewport().height()
@@ -347,12 +376,28 @@ class DocumentViewer(QScrollArea):
             bawah = top + lbl.height()
             terlihat = bawah >= y0 and top <= y1
             if terlihat and i not in self._rendered:
-                img = self._doc.halaman(i, zoom=self._zoom)
-                lbl.setPixmap(QPixmap.fromImage(img))
+                self._render_ke_label(i)
                 self._rendered.add(i)
             elif not terlihat and i in self._rendered:
                 lbl.setPixmap(QPixmap())
                 self._rendered.discard(i)
+
+    def _render_ke_label(self, i: int) -> None:
+        """Render halaman i (dgn sorotan hasil cari bila ada) ke labelnya."""
+        img = self._doc.halaman(i, zoom=self._zoom)
+        sorot = [(idx, m) for idx, (p, m) in enumerate(self._matches) if p == i]
+        if sorot:
+            painter = QPainter(img)
+            for idx, rect in sorot:
+                x0, y0, x1, y1 = rect
+                warna = _SOROT_AKTIF if idx == self._match_idx else _SOROT
+                painter.fillRect(
+                    int(x0 * self._zoom), int(y0 * self._zoom),
+                    max(1, int((x1 - x0) * self._zoom)), max(1, int((y1 - y0) * self._zoom)),
+                    warna,
+                )
+            painter.end()
+        self._labels[i].setPixmap(QPixmap.fromImage(img))
 
     def resizeEvent(self, event) -> None:  # noqa: N802 (override Qt)
         super().resizeEvent(event)
@@ -377,3 +422,64 @@ class DocumentViewer(QScrollArea):
             event.accept()
             return
         super().wheelEvent(event)
+
+    # ---- Link PDF -----------------------------------------------------
+    def _link_di(self, i: int, x_px: float, y_px: float) -> dict | None:
+        if not self._doc:
+            return None
+        px, py = x_px / self._zoom, y_px / self._zoom  # px → titik PDF
+        for lnk in self._doc.links(i):
+            x0, y0, x1, y1 = lnk["rect"]
+            if x0 <= px <= x1 and y0 <= py <= y1:
+                return lnk
+        return None
+
+    def _klik_halaman(self, i: int, x: float, y: float) -> None:
+        lnk = self._link_di(i, x, y)
+        if lnk is None:
+            return
+        if lnk.get("uri"):
+            self.buka_url.emit(lnk["uri"])
+        elif lnk.get("page") is not None:
+            self.set_halaman(int(lnk["page"]))
+
+    def _hover_halaman(self, i: int, x: float, y: float) -> None:
+        di_link = self._link_di(i, x, y) is not None
+        self._labels[i].setCursor(
+            QCursor(Qt.CursorShape.PointingHandCursor if di_link else Qt.CursorShape.ArrowCursor)
+        )
+
+    # ---- Cari di dalam dokumen ----------------------------------------
+    def cari_dalam(self, teks: str) -> None:
+        """Cari teks di dalam dokumen; sorot semua & lompat ke hasil pertama."""
+        self._matches = self._doc.cari_teks(teks) if self._doc else []
+        self._match_idx = 0 if self._matches else -1
+        self._rendered.clear()
+        self._render_terlihat()
+        if self._matches:
+            self._ke_match(0)
+        self.match_berubah.emit(self._match_idx + 1, len(self._matches))
+
+    def match_berikutnya(self) -> None:
+        self._geser_match(1)
+
+    def match_sebelumnya(self) -> None:
+        self._geser_match(-1)
+
+    def _geser_match(self, arah: int) -> None:
+        if not self._matches:
+            return
+        self._match_idx = (self._match_idx + arah) % len(self._matches)
+        self._ke_match(self._match_idx)
+        self.match_berubah.emit(self._match_idx + 1, len(self._matches))
+
+    def _ke_match(self, idx: int) -> None:
+        page, (x0, y0, x1, y1) = self._matches[idx]
+        self._rendered.discard(page)  # gambar ulang agar sorotan aktif terlihat
+        if self._slideshow:
+            self.set_halaman(page)
+        else:
+            self.set_halaman(page)
+            target = self._labels[page].pos().y() + int(y0 * self._zoom) - 60
+            self.verticalScrollBar().setValue(max(0, target))
+        self._render_terlihat()
