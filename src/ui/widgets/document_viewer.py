@@ -126,6 +126,9 @@ class DocumentViewer(QScrollArea):
         if slideshow:
             self._vbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self._fit_lebar = False
+            # Pulihkan slide terakhir (fraksi = slide/(total-1)).
+            n = doc.jumlah_halaman
+            self._slide = round(fraksi * (n - 1)) if n > 1 else 0
         else:
             self._vbox.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
             self._fit_lebar = zoom is None
@@ -227,7 +230,7 @@ class DocumentViewer(QScrollArea):
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet("background:#fff;" if not self._slideshow else "background:transparent;")
             self._vbox.addWidget(lbl, alignment=Qt.AlignmentFlag.AlignCenter)
-            if self._slideshow and i != 0:
+            if self._slideshow and i != self._slide:
                 lbl.hide()
             self._labels.append(lbl)
 

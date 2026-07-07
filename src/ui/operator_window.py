@@ -59,6 +59,7 @@ class OperatorWindow(QMainWindow):
         self._root_dir: Path | None = None
         self._current_dir: Path | None = None
         self._icon_provider = QFileIconProvider()
+        self._semua_items: list[DocumentItem] = []  # untuk resolve item pinned
         # Simpan referensi worker yang sedang berjalan agar tidak di-GC sebelum
         # sinyalnya terkirim (kalau tidak, status "Memuat…" bisa nyangkut).
         self._workers: set = set()
@@ -151,6 +152,8 @@ class OperatorWindow(QMainWindow):
         self.list_hasil = QListWidget()
         self.list_hasil.itemClicked.connect(self._pilih_hasil)
         self.list_hasil.itemDoubleClicked.connect(self._double_click_hasil)
+        self.list_hasil.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list_hasil.customContextMenuRequested.connect(self._menu_konteks)
         self.list_hasil.setWordWrap(True)
         self.list_hasil.setUniformItemSizes(False)
         self.list_hasil.setResizeMode(QListView.ResizeMode.Adjust)
@@ -289,6 +292,7 @@ class OperatorWindow(QMainWindow):
 
     def _muat_hasil(self, path: str, tipe: str, hasil, label: str) -> None:
         self.index.rebuild(hasil.items)
+        self._semua_items = list(hasil.items)
         self.settings.sumber_terakhir = path
         self.settings.sumber_tipe = tipe
         self.settings.save()
@@ -325,7 +329,10 @@ class OperatorWindow(QMainWindow):
         sheet = self.filter_sheet.currentData()
         hasil = self.index.cari(query, sheet=sheet)
         self.list_hasil.clear()
+        pinned_lok = self._isi_pinned_di_atas()
         for h in hasil:
+            if h.item.lokasi in pinned_lok:
+                continue  # sudah tampil di bagian pinned (paling atas)
             self.list_hasil.addItem(self._buat_item_file(h.item, lokasi=True))
         self.status.showMessage(
             f"{len(hasil)} hasil untuk '{query}'." if query else f"{len(hasil)} item."
@@ -337,13 +344,30 @@ class OperatorWindow(QMainWindow):
     def _tampilkan_browse(self) -> None:
         """Tampilkan isi 1 folder (subfolder + berkas) — mode Explorer."""
         self.list_hasil.clear()
+        pinned_lok = self._isi_pinned_di_atas()
         subs, files = list_dir(self._root_dir, self._current_dir)
         for d in subs:
             self.list_hasil.addItem(self._buat_item_folder(d))
         for it in files:
+            if it.lokasi in pinned_lok:
+                continue
             self.list_hasil.addItem(self._buat_item_file(it, lokasi=False))
         self._perbarui_nav(browse=True)
-        self.status.showMessage(f"{len(subs)} folder · {len(files)} berkas")
+        self.status.showMessage(f"{len(subs)} folder · {len(files)} berkas · {len(pinned_lok)} pin")
+
+    def _isi_pinned_di_atas(self) -> set[str]:
+        """Tambahkan semua file yang di-pin di paling atas. Return set lokasi pinned."""
+        pinned = [lok for lok in self.settings.pinned]
+        if not pinned:
+            return set()
+        by_lok = {it.lokasi: it for it in self._semua_items}
+        tampil: set[str] = set()
+        for lok in pinned:
+            it = by_lok.get(lok)
+            if it is not None:
+                self.list_hasil.addItem(self._buat_item_file(it, lokasi=True, pinned=True))
+                tampil.add(lok)
+        return tampil
 
     def _buat_item_folder(self, path: Path) -> QListWidgetItem:
         lw = QListWidgetItem(self._icon_provider.icon(QFileIconProvider.IconType.Folder), path.name)
@@ -351,17 +375,42 @@ class OperatorWindow(QMainWindow):
         lw.setToolTip(str(path))
         return lw
 
-    def _buat_item_file(self, it: DocumentItem, lokasi: bool) -> QListWidgetItem:
+    def _buat_item_file(self, it: DocumentItem, lokasi: bool, pinned: bool = False) -> QListWidgetItem:
         if it.sumber == Sumber.LOCAL:
             icon = self._icon_provider.icon(QFileInfo(it.lokasi))
         else:
             icon = self._icon_provider.icon(QFileIconProvider.IconType.File)
-        teks = it.nama_file
+        teks = ("📌 " if pinned else "") + it.nama_file
         lw = QListWidgetItem(icon, teks)
         lw.setData(_ROLE_ITEM, it)
         detail = f"{it.kategori} · {it.sheet}" if it.kategori else it.sheet
         lw.setToolTip(detail if not lokasi else f"{it.nama_file}\n{detail}")
         return lw
+
+    # ---- Pin ----------------------------------------------------------
+    def _menu_konteks(self, pos) -> None:
+        lw = self.list_hasil.itemAt(pos)
+        if lw is None:
+            return
+        item: DocumentItem | None = lw.data(_ROLE_ITEM)
+        if item is None:  # folder tidak bisa di-pin
+            return
+        menu = QMenu(self)
+        if item.lokasi in self.settings.pinned:
+            menu.addAction("📌 Lepas Pin", lambda: self._set_pin(item, False))
+        else:
+            menu.addAction("📌 Pin (selalu di atas)", lambda: self._set_pin(item, True))
+        menu.exec(self.list_hasil.mapToGlobal(pos))
+
+    def _set_pin(self, item: DocumentItem, pin: bool) -> None:
+        lok = item.lokasi
+        if pin and lok not in self.settings.pinned:
+            self.settings.pinned.insert(0, lok)
+        elif not pin and lok in self.settings.pinned:
+            self.settings.pinned.remove(lok)
+            self.settings.posisi_terakhir.pop(lok, None)  # lupakan posisi tersimpan
+        self.settings.save()
+        self._jalankan_pencarian()  # render ulang daftar
 
     def _perbarui_nav(self, browse: bool) -> None:
         folder_mode = self._root_dir is not None
@@ -421,6 +470,7 @@ class OperatorWindow(QMainWindow):
         item: DocumentItem | None = lw.data(_ROLE_ITEM)
         if item is None:  # folder → dibuka lewat double-click, bukan preview
             return
+        self.settings.save()  # persist posisi terakhir file sebelumnya
         self._item_aktif = item
         self._share_aktif = None  # memilih file menghentikan berbagi layar
         # Catat file yang sedang dilihat operator; proyektor tidak ikut bergeser
@@ -463,13 +513,18 @@ class OperatorWindow(QMainWindow):
         return item is not None and item.tipe_file in {TipeFile.PPTX, TipeFile.PPT}
 
     def _on_render_selesai(self, doc: RenderedDocument) -> None:
-        slideshow = self._pakai_slideshow(self._item_aktif)
-        self.preview.tampilkan_paged(doc, slideshow=slideshow)
+        item = self._item_aktif
+        slideshow = self._pakai_slideshow(item)
+        # Pulihkan posisi terakhir untuk file yang di-pin.
+        fraksi = 0.0
+        if item is not None and item.lokasi in self.settings.pinned:
+            fraksi = float(self.settings.posisi_terakhir.get(item.lokasi, 0.0))
+        self.preview.tampilkan_paged(doc, fraksi=fraksi, slideshow=slideshow)
         n = self.preview.doc_viewer.jumlah_halaman
         self.spin_halaman.setMaximum(max(1, n))
         self.lbl_total.setText(f"/ {n}")
         if slideshow:
-            self.status.showMessage(f"Slide 1/{n} — pakai ◀/▶ untuk ganti slide, lalu tampilkan ke proyektor.")
+            self.status.showMessage(f"Slide {self.preview.doc_viewer.halaman_aktif + 1}/{n} — ◀/▶ ganti slide, lalu tampilkan ke proyektor.")
         else:
             self.status.showMessage("Siap. Cek dokumen sebelum tampil ke proyektor.")
 
@@ -484,6 +539,11 @@ class OperatorWindow(QMainWindow):
         self.spin_halaman.blockSignals(True)
         self.spin_halaman.setValue(indeks + 1)
         self.spin_halaman.blockSignals(False)
+        # Ingat posisi terakhir untuk file yang di-pin (disimpan di memori,
+        # dipersist saat ganti file / tutup aplikasi).
+        item = self._item_aktif
+        if item is not None and item.lokasi in self.settings.pinned:
+            self.settings.posisi_terakhir[item.lokasi] = self.preview.doc_viewer.fraksi_scroll
 
     def _buka_lokasi_asli(self) -> None:  # F-3.5
         if not self._item_aktif:

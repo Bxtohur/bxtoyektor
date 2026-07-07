@@ -41,10 +41,16 @@ class Settings:
     sync_scroll: bool = True        # F-4.4 (default aktif)
     monitor_presentasi: int = -1    # -1 = deteksi otomatis (F-4.1)
     riwayat_cari: list[str] = None  # type: ignore[assignment]
+    pinned: list[str] = None        # lokasi file yang di-pin (selalu di atas)
+    posisi_terakhir: dict = None    # lokasi -> fraksi posisi terakhir (0..1)
 
     def __post_init__(self) -> None:
         if self.riwayat_cari is None:
             self.riwayat_cari = []
+        if self.pinned is None:
+            self.pinned = []
+        if self.posisi_terakhir is None:
+            self.posisi_terakhir = {}
 
     @classmethod
     def path(cls) -> Path:
